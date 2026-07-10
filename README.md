@@ -2,7 +2,7 @@
 
 A **Tinder-style swiper** for browsing items from the [r/FashionReps trusted-sellers wiki](https://www.reddit.com/r/FashionReps/wiki/trusted/). Swipe right to save an item with its Yupoo link, left to skip.
 
-**Live app:** deploy the `web/` folder to Vercel — items load **on demand** when you pick brands (no local scrape).
+**Live app:** https://web-xi-blond-rgpvkw0mok.vercel.app — items load **on demand** when you pick brands (no local scrape).
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Next.js 15](https://img.shields.io/badge/Next.js-15-black)
