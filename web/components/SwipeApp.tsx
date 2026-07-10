@@ -51,6 +51,7 @@ export default function SwipeApp() {
   const [scraping, setScraping] = useState(false);
   const [progress, setProgress] = useState<ScrapeProgress | null>(null);
   const [scrapeError, setScrapeError] = useState(false);
+  const [scrapeDone, setScrapeDone] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const [skipped, setSkipped] = useState<SkippedLink[]>([]);
@@ -101,6 +102,7 @@ export default function SwipeApp() {
       abortRef.current = ac;
       setScraping(true);
       setScrapeError(false);
+      setScrapeDone(false);
       setDeck([]);
       setProgress({ done: 0, total: 0, currentStore: "", itemsFound: 0 });
 
@@ -125,10 +127,12 @@ export default function SwipeApp() {
           );
           setDeck(shuffled);
           setScraping(false);
+          setScrapeDone(true);
         })
         .catch(() => {
           if (!ac.signal.aborted) setScrapeError(true);
           setScraping(false);
+          setScrapeDone(true);
         });
     },
     [seed, swiped]
@@ -317,7 +321,7 @@ export default function SwipeApp() {
                         </div>
                       </article>
                     )}
-                    {!top && !scraping && selected.length > 0 && (
+                    {!top && !scraping && scrapeDone && selected.length > 0 && (
                       <div className="deck-status">
                         <h3>{scrapeError ? "Some stores failed" : "No more items"}</h3>
                         <p className="muted">

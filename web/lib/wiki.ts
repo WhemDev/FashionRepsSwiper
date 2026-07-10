@@ -1,5 +1,5 @@
 import type { BrandInfo, SkippedLink, WikiSection } from "./types";
-import wikiData from "../../wiki_structure.json";
+import wikiData from "../wiki_structure.json";
 
 const sections = wikiData as WikiSection[];
 
