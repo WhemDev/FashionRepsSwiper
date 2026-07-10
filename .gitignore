@@ -10,3 +10,5 @@ yupoo_*.html
 .env
 .DS_Store
 Thumbs.db
+web/node_modules/
+web/.next/
