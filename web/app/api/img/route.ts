@@ -21,9 +21,22 @@ export async function GET(req: NextRequest) {
     return new NextResponse("forbidden", { status: 403 });
   }
 
+  const refParam = req.nextUrl.searchParams.get("ref");
+  let referer = "https://x.yupoo.com/";
+  if (refParam) {
+    try {
+      const refUrl = new URL(refParam);
+      if (refUrl.hostname.toLowerCase().endsWith(".yupoo.com")) {
+        referer = refUrl.origin + "/";
+      }
+    } catch {
+      /* keep default */
+    }
+  }
+
   try {
     const upstream = await fetch(raw, {
-      headers: { "User-Agent": UA, Referer: "https://x.yupoo.com/" },
+      headers: { "User-Agent": UA, Referer: referer },
     });
     if (!upstream.ok) {
       return new NextResponse("upstream error", { status: 502 });
