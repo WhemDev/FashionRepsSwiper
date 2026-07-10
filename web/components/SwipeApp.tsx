@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BrandInfo, Item, SkippedLink } from "@/lib/types";
-import { preloadItemImage, proxied } from "@/lib/images";
-import { scrapeBrandsLive, shuffleItems, type ScrapeProgress } from "@/lib/scrapeClient";
+import { preloadItemImage, preloadItemImages, proxied } from "@/lib/images";
+import { scrapeBrandsLive, type ScrapeProgress } from "@/lib/scrapeClient";
 import SwipeCard from "@/components/SwipeCard";
 
 const LS_SAVED = "fr_saved";
@@ -12,7 +12,8 @@ const LS_BRANDS = "fr_brands";
 const LS_COLLAPSED = "fr_brands_collapsed";
 const LS_WELCOME = "fr_welcome_seen";
 const SS_SEED = "fr_seed";
-const PREFETCH_AHEAD = 4;
+const PREFETCH_AHEAD = 8;
+const PRELOAD_CONCURRENCY = 4;
 
 function itemKey(item: Item) {
   return `${item.store}|${item.id}`;
@@ -50,7 +51,7 @@ export default function SwipeApp() {
   const [progress, setProgress] = useState<ScrapeProgress | null>(null);
   const [scrapeError, setScrapeError] = useState(false);
   const [scrapeDone, setScrapeDone] = useState(false);
-  const [preparingImages, setPreparingImages] = useState(false);
+  const [bufferingCard, setBufferingCard] = useState(false);
   const [imagesReady, setImagesReady] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -59,40 +60,55 @@ export default function SwipeApp() {
   const preloadRunningRef = useRef(false);
   const failedKeysRef = useRef(new Set<string>());
   const readyKeysRef = useRef(new Set<string>());
+  const swipedRef = useRef(new Set<string>());
 
   const [skipped, setSkipped] = useState<SkippedLink[]>([]);
   const [drag, setDrag] = useState({ x: 0, active: false });
   const dragStartX = useRef(0);
 
+  const buildDeck = useCallback(() => {
+    return queueRef.current.filter(
+      (it) =>
+        readyKeysRef.current.has(itemKey(it)) && !swipedRef.current.has(itemKey(it))
+    );
+  }, []);
+
+  const hasMoreToPreload = useCallback(() => {
+    return queueRef.current.some((it) => {
+      const k = itemKey(it);
+      return (
+        !readyKeysRef.current.has(k) &&
+        !failedKeysRef.current.has(k) &&
+        !swipedRef.current.has(k)
+      );
+    });
+  }, []);
+
   const commitSwipe = useCallback(
     (action: "save" | "skip") => {
-      setDeck((current) => {
-        const item = current[0];
-        if (!item) return current;
+      const current = buildDeck();
+      const item = current[0];
+      if (!item) return;
 
-        const k = itemKey(item);
-        setSwiped((prev) => {
-          const next = new Set(prev);
-          next.add(k);
-          localStorage.setItem(LS_SWIPED, JSON.stringify([...next]));
+      const k = itemKey(item);
+      swipedRef.current.add(k);
+      setSwiped(new Set(swipedRef.current));
+      localStorage.setItem(LS_SWIPED, JSON.stringify([...swipedRef.current]));
+
+      if (action === "save") {
+        const entry = { ...item, savedAt: Date.now() };
+        setSaved((prev) => {
+          if (prev.some((s) => itemKey(s) === k)) return prev;
+          const next = [entry as Item & { savedAt: number }, ...prev];
+          localStorage.setItem(LS_SAVED, JSON.stringify(next));
           return next;
         });
+      }
 
-        if (action === "save") {
-          const entry = { ...item, savedAt: Date.now() };
-          setSaved((prev) => {
-            if (prev.some((s) => itemKey(s) === k)) return prev;
-            const next = [entry as Item & { savedAt: number }, ...prev];
-            localStorage.setItem(LS_SAVED, JSON.stringify(next));
-            return next;
-          });
-        }
-
-        setDrag({ x: 0, active: false });
-        return current.slice(1);
-      });
+      setDrag({ x: 0, active: false });
+      setDeck(buildDeck());
     },
-    []
+    [buildDeck]
   );
 
   useEffect(() => {
@@ -109,7 +125,9 @@ export default function SwipeApp() {
     const s = parseInt(sessionStorage.getItem(SS_SEED) || "", 10);
     setSeed(Number.isInteger(s) ? s : Math.floor(Math.random() * 1e9));
     setSaved(readJSON(LS_SAVED, []));
-    setSwiped(new Set(readJSON<string[]>(LS_SWIPED, [])));
+    const storedSwiped = readJSON<string[]>(LS_SWIPED, []);
+    swipedRef.current = new Set(storedSwiped);
+    setSwiped(swipedRef.current);
     const stored = readJSON<string[]>(LS_BRANDS, []);
     if (stored.length) setSelected(stored.filter((x) => x !== "all"));
     setCollapsed(localStorage.getItem(LS_COLLAPSED) === "true");
@@ -127,45 +145,71 @@ export default function SwipeApp() {
     localStorage.setItem(LS_BRANDS, JSON.stringify(slugs));
   }, []);
 
-  const runPreload = useCallback(async (signal: AbortSignal, sw: Set<string>) => {
-    if (preloadRunningRef.current) return;
-    preloadRunningRef.current = true;
-    setPreparingImages(true);
+  const runPreload = useCallback(
+    async (signal: AbortSignal) => {
+      if (preloadRunningRef.current) return;
+      preloadRunningRef.current = true;
 
-    const syncDeck = () => {
-      setDeck(
-        queueRef.current.filter(
-          (it) => readyKeysRef.current.has(itemKey(it)) && !sw.has(itemKey(it))
-        )
-      );
-    };
-
-    while (preloadIdxRef.current < queueRef.current.length) {
-      if (signal.aborted) break;
-
-      const item = queueRef.current[preloadIdxRef.current++];
-      const k = itemKey(item);
-      if (readyKeysRef.current.has(k) || failedKeysRef.current.has(k)) continue;
-
-      const ok = await preloadItemImage(item);
-      if (signal.aborted) break;
-
-      if (ok) {
-        readyKeysRef.current.add(k);
+      const sync = () => {
+        const next = buildDeck();
+        setDeck(next);
         setImagesReady(readyKeysRef.current.size);
-        syncDeck();
-      } else {
-        failedKeysRef.current.add(k);
-      }
-    }
+        setBufferingCard(next.length === 0 && hasMoreToPreload());
+      };
 
-    preloadRunningRef.current = false;
-    const pending = queueRef.current.some(
-      (it) =>
-        !readyKeysRef.current.has(itemKey(it)) && !failedKeysRef.current.has(itemKey(it))
-    );
-    setPreparingImages(pending);
-  }, []);
+      try {
+        while (preloadIdxRef.current < queueRef.current.length) {
+          if (signal.aborted) break;
+
+          const buffered = buildDeck().length;
+          if (buffered >= PREFETCH_AHEAD) break;
+
+          const batch: Item[] = [];
+          while (
+            batch.length < PRELOAD_CONCURRENCY &&
+            preloadIdxRef.current < queueRef.current.length
+          ) {
+            const item = queueRef.current[preloadIdxRef.current++];
+            const k = itemKey(item);
+            if (
+              readyKeysRef.current.has(k) ||
+              failedKeysRef.current.has(k) ||
+              swipedRef.current.has(k)
+            ) {
+              continue;
+            }
+            batch.push(item);
+          }
+
+          if (batch.length === 0) break;
+
+          if (buildDeck().length === 0) setBufferingCard(true);
+
+          const loaded = await preloadItemImages(batch);
+          if (signal.aborted) break;
+
+          for (const item of batch) {
+            const k = itemKey(item);
+            if (loaded.some((it) => itemKey(it) === k)) {
+              readyKeysRef.current.add(k);
+            } else {
+              failedKeysRef.current.add(k);
+            }
+          }
+          sync();
+        }
+      } finally {
+        preloadRunningRef.current = false;
+        sync();
+      }
+    },
+    [buildDeck, hasMoreToPreload]
+  );
+
+  const kickPreload = useCallback(() => {
+    const ac = abortRef.current;
+    if (ac && !ac.signal.aborted) void runPreload(ac.signal);
+  }, [runPreload]);
 
   const resetQueue = useCallback(() => {
     queueRef.current = [];
@@ -177,15 +221,15 @@ export default function SwipeApp() {
   }, []);
 
   const enqueueItems = useCallback(
-    (items: Item[], signal: AbortSignal, sw: Set<string>) => {
+    (items: Item[], signal: AbortSignal) => {
       const seen = new Set(queueRef.current.map(itemKey));
       for (const item of items) {
         const k = itemKey(item);
-        if (seen.has(k) || sw.has(k) || failedKeysRef.current.has(k)) continue;
+        if (seen.has(k) || swipedRef.current.has(k) || failedKeysRef.current.has(k)) continue;
         seen.add(k);
         queueRef.current.push(item);
       }
-      void runPreload(signal, sw);
+      void runPreload(signal);
     },
     [runPreload]
   );
@@ -199,7 +243,7 @@ export default function SwipeApp() {
         setScraping(false);
         setProgress(null);
         setScrapeDone(false);
-        setPreparingImages(false);
+        setBufferingCard(false);
         return;
       }
 
@@ -210,54 +254,34 @@ export default function SwipeApp() {
       setScrapeDone(false);
       setProgress({ done: 0, total: 0, currentStore: "", itemsFound: 0 });
 
-      const sw = new Set(swiped);
-
       scrapeBrandsLive(
         slugs,
         setProgress,
         (batch) => {
-          const fresh = batch.filter((it) => !sw.has(itemKey(it)));
-          enqueueItems(fresh, ac.signal, sw);
+          const fresh = batch.filter((it) => !swipedRef.current.has(itemKey(it)));
+          enqueueItems(fresh, ac.signal);
         },
         ac.signal
       )
         .then((all) => {
-          const ordered = shuffleItems(
-            all.filter((it) => !sw.has(itemKey(it))),
-            seed
-          );
-          const already = new Set(readyKeysRef.current);
-          queueRef.current = ordered;
-          preloadIdxRef.current = 0;
-          readyKeysRef.current = new Set();
-          failedKeysRef.current = new Set();
-          for (const item of ordered) {
-            const k = itemKey(item);
-            if (already.has(k)) readyKeysRef.current.add(k);
-          }
-          setImagesReady(readyKeysRef.current.size);
-          setDeck(
-            ordered.filter(
-              (it) => readyKeysRef.current.has(itemKey(it)) && !sw.has(itemKey(it))
-            )
-          );
-          return runPreload(ac.signal, sw);
+          const fresh = all.filter((it) => !swipedRef.current.has(itemKey(it)));
+          enqueueItems(fresh, ac.signal);
         })
         .then(() => {
           if (!ac.signal.aborted) {
             setScraping(false);
             setScrapeDone(true);
-            setPreparingImages(false);
+            setBufferingCard(buildDeck().length === 0 && hasMoreToPreload());
           }
         })
         .catch(() => {
           if (!ac.signal.aborted) setScrapeError(true);
           setScraping(false);
           setScrapeDone(true);
-          setPreparingImages(false);
+          setBufferingCard(false);
         });
     },
-    [resetQueue, runPreload, seed, swiped, enqueueItems]
+    [resetQueue, runPreload, enqueueItems, buildDeck, hasMoreToPreload]
   );
 
   useEffect(() => {
@@ -267,11 +291,8 @@ export default function SwipeApp() {
   }, [selected, seed, startScrape]);
 
   useEffect(() => {
-    const ac = abortRef.current;
-    if (!ac || ac.signal.aborted) return;
-    if (preloadIdxRef.current >= queueRef.current.length) return;
-    void runPreload(ac.signal, new Set(swiped));
-  }, [deck.length, runPreload, swiped]);
+    kickPreload();
+  }, [deck.length, kickPreload]);
 
   const toggleBrand = (slug: string) => {
     setSelected((prev) => {
@@ -289,9 +310,7 @@ export default function SwipeApp() {
 
   const top = deck[0];
   const waitingForFirstImage =
-    selected.length > 0 &&
-    !top &&
-    (scraping || preparingImages || (progress?.itemsFound ?? 0) > 0);
+    selected.length > 0 && !top && (scraping || bufferingCard);
 
   return (
     <>
@@ -388,7 +407,7 @@ export default function SwipeApp() {
 
                 {waitingForFirstImage && (
                   <div className="scrape-progress image-loading">
-                    <strong>Preparing images…</strong>
+                    <strong>{scraping ? "Loading items…" : "Loading next image…"}</strong>
                     <div className="image-loading-spinner" aria-hidden="true" />
                     <div style={{ marginTop: 6 }}>
                       {imagesReady} ready
