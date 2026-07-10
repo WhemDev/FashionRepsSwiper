@@ -294,6 +294,14 @@ export default function SwipeApp() {
     kickPreload();
   }, [deck.length, kickPreload]);
 
+  const removeSaved = useCallback((key: string) => {
+    setSaved((prev) => {
+      const next = prev.filter((s) => itemKey(s) !== key);
+      localStorage.setItem(LS_SAVED, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const toggleBrand = (slug: string) => {
     setSelected((prev) => {
       const next = prev.includes(slug)
@@ -475,19 +483,43 @@ export default function SwipeApp() {
               </button>
             </div>
             <div className="saved-grid">
-              {saved.map((item) => (
-                <a key={itemKey(item)} className="saved-card" href={item.url} target="_blank" rel="noopener noreferrer">
-                  <div className="saved-thumb">
-                    <img src={proxied(item.img, item.store)} alt="" loading="lazy" />
-                  </div>
-                  <div className="saved-meta">
-                    <span className="brand-chip" style={{ background: brandColor(item.brand) }}>
-                      {item.brand}
-                    </span>
-                    <h3 className="saved-title">{item.title}</h3>
-                  </div>
-                </a>
-              ))}
+              {saved.map((item) => {
+                const key = itemKey(item);
+                return (
+                  <a
+                    key={key}
+                    className="saved-card"
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <div className="saved-thumb">
+                      <img src={proxied(item.img, item.store)} alt="" loading="lazy" />
+                    </div>
+                    <div className="saved-meta">
+                      <span className="brand-chip" style={{ background: brandColor(item.brand) }}>
+                        {item.brand}
+                      </span>
+                      <h3 className="saved-title">{item.title}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="remove-btn"
+                      aria-label="Remove from saved"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        removeSaved(key);
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </a>
+                );
+              })}
             </div>
             {saved.length === 0 && (
               <div className="empty-note">
