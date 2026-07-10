@@ -12,3 +12,4 @@ yupoo_*.html
 Thumbs.db
 web/node_modules/
 web/.next/
+web/.vercel/
