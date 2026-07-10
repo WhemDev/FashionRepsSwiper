@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.Python
+data/*
+!data/.gitkeep
+data/img_cache/
+app/mock_data/img_cache/
+reddit_wiki.json
+yupoo_*.html
+.env
+.DS_Store
+Thumbs.db

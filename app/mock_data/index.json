@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-07-10T20:00:00Z",
+  "total_items": 7,
+  "brands": [
+    {"name": "Gucci", "slug": "gucci", "count": 4},
+    {"name": "Prada", "slug": "prada", "count": 3}
+  ]
+}
